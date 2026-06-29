@@ -5,20 +5,11 @@ import httpx
 import json
 import os
 import uuid
-import asyncio
 import sqlite3
+import asyncio
 from contextlib import contextmanager
 from dotenv import load_dotenv
 from typing import Dict
-
-# En producción (Render + Python 3.11) libsql-experimental se instala con wheel.
-# En local (Python 3.9 macOS) no hay wheel, así que caemos a sqlite3.
-try:
-    import libsql_experimental as libsql
-    HAS_LIBSQL = True
-except ImportError:
-    libsql = None  # type: ignore
-    HAS_LIBSQL = False
 
 load_dotenv()
 
@@ -33,67 +24,131 @@ app.add_middleware(
 
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
-TURSO_URL       = os.getenv("TURSO_URL", "")
-TURSO_TOKEN     = os.getenv("TURSO_TOKEN", "")
-MAX_AI_HISTORY  = 20  # máximo mensajes enviados a DeepSeek (10 intercambios)
+TURSO_URL        = os.getenv("TURSO_URL", "")   # libsql://xxx.turso.io
+TURSO_TOKEN      = os.getenv("TURSO_TOKEN", "")
+MAX_AI_HISTORY   = 20
 
 
-# ── Base de datos (Turso en producción, archivo local en dev) ───
+# ── Capa de base de datos ───────────────────────────────────────
 #
-# Turso es SQLite en la nube: misma sintaxis SQL, pero los datos
-# viven en sus servidores y sobreviven reinicios de Render.
-# Si TURSO_URL no está configurado, usamos un archivo local como antes.
+# Turso ofrece una API HTTP REST — no necesitamos ningún paquete
+# nativo. Usamos httpx (ya instalado) para enviar SQL directamente
+# a sus servidores.
+#
+# Si TURSO_URL no está configurado (desarrollo local) caemos a
+# sqlite3 con un archivo local.
 
-@contextmanager
-def get_db():
-    if HAS_LIBSQL and TURSO_URL and TURSO_TOKEN:
-        # Producción: Turso (datos persistentes en la nube)
-        conn = libsql.connect(TURSO_URL, auth_token=TURSO_TOKEN)
+def _turso_http_url() -> str:
+    return TURSO_URL.replace("libsql://", "https://")
+
+def _turso_fmt(val):
+    if val is None:      return {"type": "null"}
+    if isinstance(val, int):   return {"type": "integer", "value": str(val)}
+    if isinstance(val, float): return {"type": "float",   "value": val}
+    return {"type": "text", "value": str(val)}
+
+def _turso_val(cell) -> object:
+    return None if cell["type"] == "null" else cell.get("value")
+
+async def _turso_request(sql: str, args: list) -> dict:
+    payload = {
+        "requests": [
+            {"type": "execute", "stmt": {
+                "sql": sql,
+                "args": [_turso_fmt(a) for a in args],
+            }},
+            {"type": "close"},
+        ]
+    }
+    headers = {
+        "Authorization": f"Bearer {TURSO_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.post(
+            f"{_turso_http_url()}/v2/pipeline",
+            json=payload,
+            headers=headers,
+        )
+        r.raise_for_status()
+    return r.json()["results"][0]
+
+
+async def db_select(sql: str, args: list = []) -> list[dict]:
+    """Ejecuta un SELECT y devuelve lista de dicts {col: valor}."""
+    if TURSO_URL and TURSO_TOKEN:
+        res = await _turso_request(sql, args)
+        if res["type"] != "ok":
+            return []
+        er = res["response"]["result"]
+        cols = [c["name"] for c in er["cols"]]
+        return [{cols[i]: _turso_val(r[i]) for i in range(len(cols))} for r in er["rows"]]
     else:
-        # Desarrollo local: SQLite en archivo (datos temporales, suficiente para dev)
-        conn = sqlite3.connect("chat.db")
-        conn.row_factory = sqlite3.Row
-    try:
-        yield conn
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def init_db():
-    with get_db() as db:
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS rooms (
-                id   TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                type TEXT NOT NULL
-            )
-        """)
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS messages (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                room_id    TEXT NOT NULL,
-                username   TEXT NOT NULL DEFAULT 'unknown',
-                from_type  TEXT NOT NULL DEFAULT 'user',
-                content    TEXT NOT NULL,
-                created_at TEXT DEFAULT (datetime('now'))
-            )
-        """)
-        # Migración: añadir columnas si la tabla ya existía sin ellas
-        for col, definition in [
-            ("username",   "TEXT NOT NULL DEFAULT 'unknown'"),
-            ("from_type",  "TEXT NOT NULL DEFAULT 'user'"),
-            ("created_at", "TEXT DEFAULT (datetime('now'))"),
-        ]:
+        # Fallback SQLite local (datos efímeros, solo para dev)
+        def _q():
+            conn = sqlite3.connect("chat.db")
+            conn.row_factory = sqlite3.Row
             try:
-                db.execute(f"ALTER TABLE messages ADD COLUMN {col} {definition}")
+                rows = conn.execute(sql, args).fetchall()
+                return [dict(r) for r in rows]
+            finally:
+                conn.close()
+        return await asyncio.to_thread(_q)
+
+
+async def db_run(sql: str, args: list = [], ignore_errors: bool = False) -> None:
+    """Ejecuta INSERT / UPDATE / DELETE / CREATE / ALTER."""
+    if TURSO_URL and TURSO_TOKEN:
+        res = await _turso_request(sql, args)
+        if res["type"] != "ok" and not ignore_errors:
+            raise Exception(res.get("error", {}).get("message", "Turso error"))
+    else:
+        def _q():
+            conn = sqlite3.connect("chat.db")
+            try:
+                conn.execute(sql, args)
+                conn.commit()
             except Exception:
-                pass
+                if not ignore_errors:
+                    raise
+            finally:
+                conn.close()
+        await asyncio.to_thread(_q)
+
+
+async def init_db():
+    await db_run("""
+        CREATE TABLE IF NOT EXISTS rooms (
+            id   TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            type TEXT NOT NULL
+        )
+    """)
+    await db_run("""
+        CREATE TABLE IF NOT EXISTS messages (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            room_id    TEXT NOT NULL,
+            username   TEXT NOT NULL DEFAULT 'unknown',
+            from_type  TEXT NOT NULL DEFAULT 'user',
+            content    TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+    """)
+    # Migración: añadir columnas si la tabla ya existía sin ellas
+    for col, definition in [
+        ("username",   "TEXT NOT NULL DEFAULT 'unknown'"),
+        ("from_type",  "TEXT NOT NULL DEFAULT 'user'"),
+        ("created_at", "TEXT DEFAULT (datetime('now'))"),
+    ]:
+        await db_run(
+            f"ALTER TABLE messages ADD COLUMN {col} {definition}",
+            ignore_errors=True,
+        )
 
 
 @app.on_event("startup")
-def startup():
-    init_db()
+async def startup():
+    await init_db()
 
 
 # ── IA ──────────────────────────────────────────────────────────
@@ -121,57 +176,47 @@ class ConnectionManager:
         if room_id not in self.connections:
             self.connections[room_id] = {}
 
-    def room_exists_in_db(self, room_id: str) -> bool:
-        with get_db() as db:
-            return db.execute(
-                "SELECT id FROM rooms WHERE id = ?", (room_id,)
-            ).fetchone() is not None
+    async def room_exists_in_db(self, room_id: str) -> bool:
+        rows = await db_select("SELECT id FROM rooms WHERE id = ?", [room_id])
+        return len(rows) > 0
 
-    def load_conversation(self, room_id: str) -> list:
-        # Solo los últimos MAX_AI_HISTORY mensajes para no superar el límite de tokens
-        # Columnas: from_type[0], content[1]
+    async def load_conversation(self, room_id: str) -> list:
         system_msg = {
             "role": "system",
             "content": "Eres un asistente útil y amigable. Responde siempre en el idioma que te hablen.",
         }
-        with get_db() as db:
-            rows = db.execute(
-                """SELECT from_type, content FROM messages
-                   WHERE room_id = ?
-                   ORDER BY id DESC LIMIT ?""",
-                (room_id, MAX_AI_HISTORY),
-            ).fetchall()
+        rows = await db_select(
+            "SELECT from_type, content FROM messages WHERE room_id = ? ORDER BY id DESC LIMIT ?",
+            [room_id, MAX_AI_HISTORY],
+        )
         rows = list(reversed(rows))
         conv = [system_msg]
         for r in rows:
-            role = "assistant" if r[0] == "ai" else "user"
-            conv.append({"role": role, "content": r[1]})
+            role = "assistant" if r["from_type"] == "ai" else "user"
+            conv.append({"role": role, "content": r["content"]})
         return conv
 
-    def load_history(self, room_id: str) -> list:
-        # Columnas: username[0], from_type[1], content[2], created_at[3]
-        with get_db() as db:
-            rows = db.execute(
-                "SELECT username, from_type, content, created_at FROM messages WHERE room_id = ? ORDER BY id",
-                (room_id,),
-            ).fetchall()
+    async def load_history(self, room_id: str) -> list:
+        rows = await db_select(
+            "SELECT username, from_type, content, created_at FROM messages WHERE room_id = ? ORDER BY id",
+            [room_id],
+        )
         return [
             {
                 "type": "message",
-                "username": r[0],
-                "from": r[1],
-                "content": r[2],
-                "timestamp": r[3],
+                "username": r["username"],
+                "from": r["from_type"],
+                "content": r["content"],
+                "timestamp": r["created_at"],
             }
             for r in rows
         ]
 
-    def save_message(self, room_id: str, username: str, from_type: str, content: str):
-        with get_db() as db:
-            db.execute(
-                "INSERT INTO messages (room_id, username, from_type, content) VALUES (?, ?, ?, ?)",
-                (room_id, username, from_type, content),
-            )
+    async def save_message(self, room_id: str, username: str, from_type: str, content: str):
+        await db_run(
+            "INSERT INTO messages (room_id, username, from_type, content) VALUES (?, ?, ?, ?)",
+            [room_id, username, from_type, content],
+        )
 
     def schedule_cleanup(self, room_id: str) -> None:
         if room_id in self._pending_cleanup:
@@ -180,9 +225,8 @@ class ConnectionManager:
         async def do_cleanup():
             await asyncio.sleep(30)
             if not self.get_users(room_id):
-                with get_db() as db:
-                    db.execute("DELETE FROM messages WHERE room_id = ?", (room_id,))
-                    db.execute("DELETE FROM rooms WHERE id = ?", (room_id,))
+                await db_run("DELETE FROM messages WHERE room_id = ?", [room_id])
+                await db_run("DELETE FROM rooms WHERE id = ?", [room_id])
                 self.connections.pop(room_id, None)
             self._pending_cleanup.pop(room_id, None)
 
@@ -196,7 +240,7 @@ class ConnectionManager:
         await websocket.accept()
         self._ensure_room(room_id)
 
-        history = self.load_history(room_id)
+        history = await self.load_history(room_id)
         if history:
             await websocket.send_text(json.dumps({"type": "history", "messages": history}))
 
@@ -241,26 +285,21 @@ def health_check():
 
 
 @app.get("/rooms")
-def get_rooms():
-    # Columnas: id[0], name[1], type[2]
-    with get_db() as db:
-        rows = db.execute("SELECT id, name, type FROM rooms ORDER BY rowid DESC").fetchall()
+async def get_rooms():
+    rows = await db_select("SELECT id, name, type FROM rooms ORDER BY rowid DESC")
     return [
-        {"id": r[0], "name": r[1], "type": r[2], "users": manager.get_users(r[0])}
+        {"id": r["id"], "name": r["name"], "type": r["type"], "users": manager.get_users(r["id"])}
         for r in rows
     ]
 
 
 @app.get("/rooms/{room_id}")
-def get_room(room_id: str):
-    # Columnas: id[0], name[1], type[2]
-    with get_db() as db:
-        row = db.execute(
-            "SELECT id, name, type FROM rooms WHERE id = ?", (room_id,)
-        ).fetchone()
-    if not row:
+async def get_room(room_id: str):
+    rows = await db_select("SELECT id, name, type FROM rooms WHERE id = ?", [room_id])
+    if not rows:
         raise HTTPException(status_code=404, detail="Room not found")
-    return {"id": row[0], "name": row[1], "type": row[2], "users": manager.get_users(row[0])}
+    r = rows[0]
+    return {"id": r["id"], "name": r["name"], "type": r["type"], "users": manager.get_users(r["id"])}
 
 
 class CreateRoomRequest(BaseModel):
@@ -269,13 +308,12 @@ class CreateRoomRequest(BaseModel):
 
 
 @app.post("/rooms")
-def create_room(req: CreateRoomRequest):
+async def create_room(req: CreateRoomRequest):
     room_id = str(uuid.uuid4())[:8].upper()
-    with get_db() as db:
-        db.execute(
-            "INSERT INTO rooms (id, name, type) VALUES (?, ?, ?)",
-            (room_id, req.name, req.type),
-        )
+    await db_run(
+        "INSERT INTO rooms (id, name, type) VALUES (?, ?, ?)",
+        [room_id, req.name, req.type],
+    )
     return {"id": room_id, "name": req.name, "type": req.type}
 
 
@@ -283,7 +321,7 @@ def create_room(req: CreateRoomRequest):
 
 @app.websocket("/ws/{room_id}/{username}")
 async def websocket_endpoint(websocket: WebSocket, room_id: str, username: str):
-    if not manager.room_exists_in_db(room_id):
+    if not await manager.room_exists_in_db(room_id):
         await websocket.close(code=4004)
         return
 
@@ -298,10 +336,8 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, username: str):
         await websocket.close(code=4001)
         return
 
-    # Columna: type[0]
-    with get_db() as db:
-        room = db.execute("SELECT type FROM rooms WHERE id = ?", (room_id,)).fetchone()
-    room_type = room[0]
+    rows = await db_select("SELECT type FROM rooms WHERE id = ?", [room_id])
+    room_type = rows[0]["type"]
 
     await manager.connect(room_id, username, websocket)
 
@@ -310,7 +346,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, username: str):
             data = await websocket.receive_text()
             content = json.loads(data).get("content", "")
 
-            manager.save_message(room_id, username, "user", content)
+            await manager.save_message(room_id, username, "user", content)
             await manager.broadcast(room_id, {
                 "type": "message",
                 "content": content,
@@ -319,13 +355,13 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, username: str):
             })
 
             if room_type == "ai":
-                conv = manager.load_conversation(room_id)
+                conv = await manager.load_conversation(room_id)
                 await manager.broadcast(room_id, {
                     "type": "typing", "content": "", "username": "DeepSeek AI", "from": "ai",
                 })
                 try:
                     reply = await ask_deepseek(conv)
-                    manager.save_message(room_id, "DeepSeek AI", "ai", reply)
+                    await manager.save_message(room_id, "DeepSeek AI", "ai", reply)
                     await manager.broadcast(room_id, {
                         "type": "message",
                         "content": reply,
