@@ -6,11 +6,13 @@
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
+// ── Header ───────────────────────────────────────────────────
+
 .chat-header {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 16px;
+  padding: 10px 12px;
   background: #075e54;
   color: white;
   box-shadow: 0 1px 3px rgba(0,0,0,0.3);
@@ -19,40 +21,86 @@
     flex: 1;
     display: flex;
     flex-direction: column;
+    min-width: 0;
 
-    .room-name { font-weight: 700; font-size: 16px; }
-    .status { font-size: 12px; opacity: 0.85; }
+    .room-name {
+      font-weight: 700;
+      font-size: 16px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .status {
+      font-size: 12px;
+      opacity: 0.85;
+    }
   }
 }
 
-.back-btn {
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.icon-btn {
   background: none;
   border: none;
   color: white;
   cursor: pointer;
   display: flex;
   align-items: center;
-  padding: 4px;
+  justify-content: center;
+  padding: 6px;
   border-radius: 50%;
   transition: background 0.2s;
+  position: relative;
 
   &:hover { background: rgba(255,255,255,0.15); }
+  &.active { background: rgba(255,255,255,0.2); }
 }
 
-.code-btn {
+.users-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  background: #25d366;
+  color: white;
+  font-size: 10px;
+  font-weight: 700;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.share-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
   background: rgba(255,255,255,0.15);
   border: 1px solid rgba(255,255,255,0.3);
   color: white;
-  border-radius: 8px;
-  padding: 5px 10px;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 1px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
-  transition: background 0.2s;
+  transition: all 0.2s;
+  white-space: nowrap;
 
   &:hover { background: rgba(255,255,255,0.25); }
+
+  &.copied {
+    background: #25d366;
+    border-color: #25d366;
+  }
 }
+
+// ── Banner reconexión ────────────────────────────────────────
 
 .reconnecting-banner {
   display: flex;
@@ -78,6 +126,14 @@
   50% { opacity: 0.3; }
 }
 
+// ── Cuerpo del chat ──────────────────────────────────────────
+
+.chat-body {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
 .messages-container {
   flex: 1;
   overflow-y: auto;
@@ -89,6 +145,93 @@
   &::-webkit-scrollbar { width: 5px; }
   &::-webkit-scrollbar-thumb { background: #bbb; border-radius: 4px; }
 }
+
+// ── Panel lateral usuarios ───────────────────────────────────
+
+.users-panel {
+  width: 220px;
+  background: white;
+  border-left: 1px solid #ddd;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+
+.users-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 10px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #333;
+  border-bottom: 1px solid #eee;
+
+  .icon-btn { color: #555; }
+}
+
+.users-list {
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow-y: auto;
+}
+
+.user-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  transition: background 0.15s;
+
+  &:hover { background: #f5f5f5; }
+
+  &.me .user-avatar {
+    background: #075e54;
+  }
+
+  .user-name {
+    flex: 1;
+    font-size: 14px;
+    color: #222;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+.user-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: #128c7e;
+  color: white;
+  font-weight: 700;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.online-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #25d366;
+  flex-shrink: 0;
+}
+
+.no-users {
+  font-size: 13px;
+  color: #aaa;
+  text-align: center;
+  padding: 20px 0;
+}
+
+// ── Mensajes ─────────────────────────────────────────────────
 
 .empty-state {
   flex: 1;
@@ -123,9 +266,7 @@
   align-items: flex-start;
   margin-top: 6px;
 
-  &.own-row {
-    align-items: flex-end;
-  }
+  &.own-row { align-items: flex-end; }
 }
 
 .sender-name {
@@ -160,28 +301,10 @@
   }
 }
 
-.own-bubble {
-  background: #dcf8c6;
-  border-top-right-radius: 0;
-  color: #111;
-}
-
-.other-bubble {
-  background: white;
-  border-top-left-radius: 0;
-  color: #111;
-}
-
-.ai-bubble {
-  background: #e3f2fd;
-  border-top-left-radius: 0;
-  color: #0d47a1;
-}
-
-.error-bubble {
-  background: #ffe0e0;
-  color: #c0392b;
-}
+.own-bubble   { background: #dcf8c6; border-top-right-radius: 0; color: #111; }
+.other-bubble { background: white;   border-top-left-radius: 0;  color: #111; }
+.ai-bubble    { background: #e3f2fd; border-top-left-radius: 0;  color: #0d47a1; }
+.error-bubble { background: #ffe0e0; color: #c0392b; }
 
 .typing-bubble {
   display: flex;
@@ -207,6 +330,8 @@
   30% { transform: translateY(-6px); }
 }
 
+// ── Input bar ────────────────────────────────────────────────
+
 .input-bar {
   display: flex;
   align-items: flex-end;
@@ -229,6 +354,8 @@
   max-height: 120px;
   overflow-y: auto;
   line-height: 1.4;
+
+  &:disabled { background: #f5f5f5; color: #aaa; }
 }
 
 .send-btn {

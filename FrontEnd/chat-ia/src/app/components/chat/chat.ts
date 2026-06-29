@@ -21,6 +21,8 @@ export class Chat implements OnInit, OnDestroy, AfterViewChecked {
   roomId = '';
   usersInRoom: string[] = [];
   connectionState: ConnectionState = 'reconnecting';
+  showUsers = false;
+  copied = false;
 
   private subs: Subscription[] = [];
   private shouldScroll = false;
@@ -50,15 +52,12 @@ export class Chat implements OnInit, OnDestroy, AfterViewChecked {
     this.ws.connect(this.roomId, this.username);
 
     this.subs.push(
-      this.ws.state$.subscribe((state) => {
-        this.connectionState = state;
-      })
+      this.ws.state$.subscribe((state) => (this.connectionState = state))
     );
 
     this.subs.push(
       this.ws.messages$.subscribe((msg) => {
         if (msg.type === 'history') {
-          // Al reconectar, el historial reemplaza los mensajes para evitar duplicados
           this.messages = msg.messages ?? [];
         } else if (msg.type === 'typing') {
           this.isTyping = true;
@@ -97,8 +96,20 @@ export class Chat implements OnInit, OnDestroy, AfterViewChecked {
     return msg.from === 'user' && msg.username === this.username;
   }
 
-  copyRoomCode(): void {
-    navigator.clipboard.writeText(this.roomId);
+  shareRoom(): void {
+    const url = `${window.location.origin}/room/${this.roomId}`;
+    navigator.clipboard.writeText(url).then(() => {
+      this.copied = true;
+      setTimeout(() => (this.copied = false), 2000);
+    });
+  }
+
+  toggleUsers(): void {
+    this.showUsers = !this.showUsers;
+  }
+
+  userInitial(name: string): string {
+    return name.charAt(0).toUpperCase();
   }
 
   goBack(): void {
