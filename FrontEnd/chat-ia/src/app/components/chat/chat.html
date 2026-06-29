@@ -1,0 +1,51 @@
+<div class="chat-wrapper">
+  <div class="chat-header">
+    <div class="avatar">IA</div>
+    <div class="header-info">
+      <span class="contact-name">DeepSeek AI</span>
+      <span class="status">{{ isTyping ? 'escribiendo...' : 'en línea' }}</span>
+    </div>
+  </div>
+
+  <div class="messages-container" #messagesContainer>
+    @if (messages.length === 0) {
+      <div class="empty-state">
+        <p>Escribe un mensaje para empezar a chatear con la IA</p>
+      </div>
+    }
+
+    @for (msg of messages; track $index) {
+      <div class="message-row" [class.user-row]="msg.from === 'user'">
+        <div class="bubble" [class.user-bubble]="msg.from === 'user'" [class.ai-bubble]="msg.from === 'ai'" [class.error-bubble]="msg.type === 'error'">
+          <p class="bubble-text">{{ msg.content }}</p>
+          <span class="bubble-time">{{ formatTime(msg.timestamp) }}</span>
+        </div>
+      </div>
+    }
+
+    @if (isTyping) {
+      <div class="message-row">
+        <div class="bubble ai-bubble typing-bubble">
+          <span class="dot"></span>
+          <span class="dot"></span>
+          <span class="dot"></span>
+        </div>
+      </div>
+    }
+  </div>
+
+  <div class="input-bar">
+    <textarea
+      [(ngModel)]="inputText"
+      (keydown)="onKeyDown($event)"
+      placeholder="Escribe un mensaje..."
+      rows="1"
+      class="input-field"
+    ></textarea>
+    <button class="send-btn" (click)="sendMessage()" [disabled]="!inputText.trim()">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="22" height="22">
+        <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+      </svg>
+    </button>
+  </div>
+</div>

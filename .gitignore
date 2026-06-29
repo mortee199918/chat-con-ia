@@ -1,0 +1,14 @@
+# Python
+BackEnd/venv/
+BackEnd/__pycache__/
+BackEnd/*.pyc
+BackEnd/.env
+
+# Node
+FrontEnd/chat-ia/node_modules/
+
+# Angular build
+FrontEnd/chat-ia/dist/
+
+# OS
+.DS_Store
