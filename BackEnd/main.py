@@ -234,6 +234,18 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, username: str):
         await websocket.close(code=4004)
         return
 
+    # Validar nombre duplicado
+    if username in manager.get_users(room_id):
+        await websocket.accept()
+        await websocket.send_text(json.dumps({
+            "type": "error",
+            "content": f"El nombre '{username}' ya está en uso en esta sala. Vuelve al lobby y elige otro.",
+            "username": "Sistema",
+            "from": "system",
+        }))
+        await websocket.close(code=4001)
+        return
+
     with get_db() as db:
         room = db.execute("SELECT type FROM rooms WHERE id = ?", (room_id,)).fetchone()
     room_type = room["type"]

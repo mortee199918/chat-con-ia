@@ -48,6 +48,20 @@
     </div>
   }
 
+  @if (isFatalError) {
+    <div class="fatal-error-overlay">
+      <div class="fatal-error-card">
+        <div class="fatal-error-icon">⚠️</div>
+        @for (msg of messages; track $index) {
+          @if (msg.type === 'error') {
+            <p class="fatal-error-msg">{{ msg.content }}</p>
+          }
+        }
+        <button class="fatal-back-btn" (click)="goBack()">Volver al lobby</button>
+      </div>
+    </div>
+  }
+
   <div class="chat-body" [class.with-panel]="showUsers">
     <div class="messages-container" #messagesContainer>
       @if (messages.length === 0 && isConnected) {

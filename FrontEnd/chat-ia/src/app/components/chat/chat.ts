@@ -35,6 +35,10 @@ export class Chat implements OnInit, OnDestroy, AfterViewChecked {
     return this.connectionState === 'connected';
   }
 
+  get isFatalError(): boolean {
+    return this.connectionState === 'fatal_error';
+  }
+
   constructor(
     private ws: WebsocketService,
     private userService: UserService,

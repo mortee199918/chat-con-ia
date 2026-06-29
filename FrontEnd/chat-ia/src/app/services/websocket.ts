@@ -12,7 +12,7 @@ export interface ChatMessage {
   messages?: ChatMessage[];
 }
 
-export type ConnectionState = 'connected' | 'reconnecting' | 'disconnected';
+export type ConnectionState = 'connected' | 'reconnecting' | 'disconnected' | 'fatal_error';
 
 @Injectable({ providedIn: 'root' })
 export class WebsocketService {
@@ -66,8 +66,15 @@ export class WebsocketService {
       }
     };
 
-    this.socket.onclose = () => {
+    this.socket.onclose = (event) => {
       if (this.intentionalClose) return;
+
+      // Errores fatales: no reconectar
+      if (event.code === 4001 || event.code === 4004) {
+        this.stateSubject.next('fatal_error');
+        return;
+      }
+
       this.stateSubject.next('reconnecting');
       this.retryTimer = setTimeout(() => this.doConnect(), this.retryDelay);
       this.retryDelay = Math.min(this.retryDelay * 2, this.maxDelay);

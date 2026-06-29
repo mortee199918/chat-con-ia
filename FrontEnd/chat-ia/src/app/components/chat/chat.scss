@@ -4,6 +4,7 @@
   height: 100dvh;
   background: #ece5dd;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  position: relative;
 }
 
 // ── Header ───────────────────────────────────────────────────
@@ -124,6 +125,45 @@
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.3; }
+}
+
+// ── Error fatal ──────────────────────────────────────────────
+
+.fatal-error-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+
+.fatal-error-card {
+  background: white;
+  border-radius: 16px;
+  padding: 36px 32px;
+  text-align: center;
+  max-width: 320px;
+  width: 90%;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+
+  .fatal-error-icon { font-size: 48px; margin-bottom: 16px; }
+  .fatal-error-msg  { font-size: 15px; color: #444; margin-bottom: 24px; line-height: 1.5; }
+}
+
+.fatal-back-btn {
+  padding: 12px 28px;
+  background: #075e54;
+  color: white;
+  border: none;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+
+  &:hover { background: #128c7e; }
 }
 
 // ── Cuerpo del chat ──────────────────────────────────────────
