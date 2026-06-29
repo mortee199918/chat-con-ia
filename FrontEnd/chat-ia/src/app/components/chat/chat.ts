@@ -2,7 +2,7 @@ import { Component, OnInit, OnDestroy, ViewChild, ElementRef, AfterViewChecked }
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
-import { WebsocketService, ChatMessage } from '../../services/websocket';
+import { WebsocketService, ChatMessage, ConnectionState } from '../../services/websocket';
 import { UserService } from '../../services/user.service';
 import { Subscription } from 'rxjs';
 
@@ -20,12 +20,17 @@ export class Chat implements OnInit, OnDestroy, AfterViewChecked {
   isTyping = false;
   roomId = '';
   usersInRoom: string[] = [];
+  connectionState: ConnectionState = 'reconnecting';
 
-  private sub!: Subscription;
+  private subs: Subscription[] = [];
   private shouldScroll = false;
 
   get username(): string {
     return this.userService.username;
+  }
+
+  get isConnected(): boolean {
+    return this.connectionState === 'connected';
   }
 
   constructor(
@@ -44,18 +49,27 @@ export class Chat implements OnInit, OnDestroy, AfterViewChecked {
     this.roomId = this.route.snapshot.paramMap.get('id') || '';
     this.ws.connect(this.roomId, this.username);
 
-    this.sub = this.ws.messages$.subscribe((msg) => {
-      if (msg.type === 'history') {
-        this.messages = [...(msg.messages ?? []), ...this.messages];
-      } else if (msg.type === 'typing') {
-        this.isTyping = true;
-      } else {
-        this.isTyping = false;
-        this.messages.push(msg);
-        if (msg.users) this.usersInRoom = msg.users;
-      }
-      this.shouldScroll = true;
-    });
+    this.subs.push(
+      this.ws.state$.subscribe((state) => {
+        this.connectionState = state;
+      })
+    );
+
+    this.subs.push(
+      this.ws.messages$.subscribe((msg) => {
+        if (msg.type === 'history') {
+          // Al reconectar, el historial reemplaza los mensajes para evitar duplicados
+          this.messages = msg.messages ?? [];
+        } else if (msg.type === 'typing') {
+          this.isTyping = true;
+        } else {
+          this.isTyping = false;
+          this.messages.push(msg);
+          if (msg.users) this.usersInRoom = msg.users;
+        }
+        this.shouldScroll = true;
+      })
+    );
   }
 
   ngAfterViewChecked(): void {
@@ -67,7 +81,7 @@ export class Chat implements OnInit, OnDestroy, AfterViewChecked {
 
   sendMessage(): void {
     const text = this.inputText.trim();
-    if (!text) return;
+    if (!text || !this.isConnected) return;
     this.ws.sendMessage(text);
     this.inputText = '';
   }
@@ -99,7 +113,7 @@ export class Chat implements OnInit, OnDestroy, AfterViewChecked {
   }
 
   ngOnDestroy(): void {
-    this.sub?.unsubscribe();
+    this.subs.forEach((s) => s.unsubscribe());
     this.ws.disconnect();
   }
 

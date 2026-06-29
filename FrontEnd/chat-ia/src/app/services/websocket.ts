@@ -1,5 +1,5 @@
 import { Injectable } from '@angular/core';
-import { Subject, Observable } from 'rxjs';
+import { Subject, Observable, BehaviorSubject } from 'rxjs';
 import { environment } from '../../environments/environment';
 
 export interface ChatMessage {
@@ -12,15 +12,40 @@ export interface ChatMessage {
   messages?: ChatMessage[];
 }
 
+export type ConnectionState = 'connected' | 'reconnecting' | 'disconnected';
+
 @Injectable({ providedIn: 'root' })
 export class WebsocketService {
   private socket!: WebSocket;
   private messageSubject = new Subject<ChatMessage>();
+  private stateSubject = new BehaviorSubject<ConnectionState>('disconnected');
 
   messages$: Observable<ChatMessage> = this.messageSubject.asObservable();
+  state$: Observable<ConnectionState> = this.stateSubject.asObservable();
+
+  private roomId = '';
+  private username = '';
+  private intentionalClose = false;
+  private retryDelay = 1000;
+  private readonly maxDelay = 10000;
+  private retryTimer?: ReturnType<typeof setTimeout>;
 
   connect(roomId: string, username: string): void {
-    this.socket = new WebSocket(`${environment.wsUrl}/ws/${roomId}/${username}`);
+    this.roomId = roomId;
+    this.username = username;
+    this.intentionalClose = false;
+    this.retryDelay = 1000;
+    this.doConnect();
+  }
+
+  private doConnect(): void {
+    this.stateSubject.next('reconnecting');
+    this.socket = new WebSocket(`${environment.wsUrl}/ws/${this.roomId}/${this.username}`);
+
+    this.socket.onopen = () => {
+      this.stateSubject.next('connected');
+      this.retryDelay = 1000;
+    };
 
     this.socket.onmessage = (event) => {
       const data = JSON.parse(event.data);
@@ -33,7 +58,7 @@ export class WebsocketService {
           timestamp: new Date(),
           messages: data.messages.map((m: ChatMessage) => ({
             ...m,
-            timestamp: new Date(m.timestamp),
+            timestamp: new Date(m.timestamp as unknown as string),
           })),
         });
       } else {
@@ -41,14 +66,15 @@ export class WebsocketService {
       }
     };
 
+    this.socket.onclose = () => {
+      if (this.intentionalClose) return;
+      this.stateSubject.next('reconnecting');
+      this.retryTimer = setTimeout(() => this.doConnect(), this.retryDelay);
+      this.retryDelay = Math.min(this.retryDelay * 2, this.maxDelay);
+    };
+
     this.socket.onerror = () => {
-      this.messageSubject.next({
-        type: 'error',
-        content: 'Error de conexión con el servidor.',
-        username: 'Sistema',
-        from: 'system',
-        timestamp: new Date(),
-      });
+      // onclose siempre se dispara después de onerror
     };
   }
 
@@ -59,6 +85,9 @@ export class WebsocketService {
   }
 
   disconnect(): void {
+    this.intentionalClose = true;
+    if (this.retryTimer) clearTimeout(this.retryTimer);
     this.socket?.close();
+    this.stateSubject.next('disconnected');
   }
 }

@@ -54,6 +54,30 @@
   &:hover { background: rgba(255,255,255,0.25); }
 }
 
+.reconnecting-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: #f39c12;
+  color: white;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.reconnecting-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: white;
+  animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
 .messages-container {
   flex: 1;
   overflow-y: auto;

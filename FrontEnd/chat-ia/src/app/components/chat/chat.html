@@ -16,6 +16,13 @@
     </button>
   </div>
 
+  @if (connectionState === 'reconnecting') {
+    <div class="reconnecting-banner">
+      <span class="reconnecting-dot"></span>
+      Reconectando...
+    </div>
+  }
+
   <div class="messages-container" #messagesContainer>
     @if (messages.length === 0) {
       <div class="empty-state">
@@ -67,7 +74,7 @@
       rows="1"
       class="input-field"
     ></textarea>
-    <button class="send-btn" (click)="sendMessage()" [disabled]="!inputText.trim()">
+    <button class="send-btn" (click)="sendMessage()" [disabled]="!inputText.trim() || !isConnected">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="22" height="22">
         <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
       </svg>
