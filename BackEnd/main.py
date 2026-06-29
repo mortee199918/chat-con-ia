@@ -149,6 +149,11 @@ manager = ConnectionManager()
 
 # ── HTTP endpoints ──────────────────────────────────────────────
 
+@app.get("/")
+def health_check():
+    return {"status": "ok"}
+
+
 @app.get("/rooms")
 def get_rooms():
     with get_db() as db:
