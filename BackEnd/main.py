@@ -1,4 +1,4 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
@@ -6,6 +6,7 @@ import json
 import os
 import uuid
 import sqlite3
+import asyncio
 from contextlib import contextmanager
 from dotenv import load_dotenv
 from typing import Dict
@@ -95,6 +96,7 @@ async def ask_deepseek(messages: list[dict]) -> str:
 class ConnectionManager:
     def __init__(self):
         self.connections: Dict[str, Dict[str, WebSocket]] = {}
+        self._pending_cleanup: Dict[str, asyncio.Task] = {}
 
     def _ensure_room(self, room_id: str):
         if room_id not in self.connections:
@@ -152,7 +154,27 @@ class ConnectionManager:
                 (room_id, username, from_type, content),
             )
 
+    def schedule_cleanup(self, room_id: str) -> None:
+        if room_id in self._pending_cleanup:
+            self._pending_cleanup[room_id].cancel()
+
+        async def do_cleanup():
+            await asyncio.sleep(30)
+            if not self.get_users(room_id):
+                with get_db() as db:
+                    db.execute("DELETE FROM messages WHERE room_id = ?", (room_id,))
+                    db.execute("DELETE FROM rooms WHERE id = ?", (room_id,))
+                self.connections.pop(room_id, None)
+            self._pending_cleanup.pop(room_id, None)
+
+        self._pending_cleanup[room_id] = asyncio.create_task(do_cleanup())
+
     async def connect(self, room_id: str, username: str, websocket: WebSocket):
+        # Cancelar limpieza pendiente si alguien vuelve a entrar
+        if room_id in self._pending_cleanup:
+            self._pending_cleanup[room_id].cancel()
+            self._pending_cleanup.pop(room_id, None)
+
         await websocket.accept()
         self._ensure_room(room_id)
 
@@ -220,6 +242,15 @@ def get_rooms():
 class CreateRoomRequest(BaseModel):
     name: str
     type: str
+
+
+@app.get("/rooms/{room_id}")
+def get_room(room_id: str):
+    with get_db() as db:
+        row = db.execute("SELECT id, name, type FROM rooms WHERE id = ?", (room_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Room not found")
+    return {"id": row["id"], "name": row["name"], "type": row["type"], "users": manager.get_users(row["id"])}
 
 
 @app.post("/rooms")
@@ -300,10 +331,13 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, username: str):
 
     except WebSocketDisconnect:
         manager.disconnect(room_id, username)
+        remaining = manager.get_users(room_id)
         await manager.broadcast(room_id, {
             "type": "system",
             "content": f"{username} ha salido del chat",
             "username": "Sistema",
             "from": "system",
-            "users": manager.get_users(room_id),
+            "users": remaining,
         })
+        if not remaining:
+            manager.schedule_cleanup(room_id)

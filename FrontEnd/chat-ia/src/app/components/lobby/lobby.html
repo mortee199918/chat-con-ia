@@ -31,7 +31,7 @@
 
     <div class="rooms-list">
       @for (room of rooms; track room.id) {
-        <div class="room-card" (click)="joinRoom(room.id)">
+        <div class="room-card" (click)="joinRoom(room.id, room.name)">
           <div class="room-icon">{{ room.type === 'ai' ? '🤖' : '👥' }}</div>
           <div class="room-info">
             <span class="room-name">{{ room.name }}</span>

@@ -10,6 +10,7 @@ export interface ChatMessage {
   timestamp: Date;
   users?: string[];
   messages?: ChatMessage[];
+  isHistory?: boolean;
 }
 
 export type ConnectionState = 'connected' | 'reconnecting' | 'disconnected' | 'fatal_error';

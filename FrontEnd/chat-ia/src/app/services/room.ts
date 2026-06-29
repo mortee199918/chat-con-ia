@@ -20,6 +20,10 @@ export class RoomService {
     return this.http.get<Room[]>(`${this.api}/rooms`);
   }
 
+  getRoom(id: string): Observable<Room> {
+    return this.http.get<Room>(`${this.api}/rooms/${id}`);
+  }
+
   createRoom(name: string, type: 'ai' | 'peer'): Observable<Room> {
     return this.http.post<Room>(`${this.api}/rooms`, { name, type });
   }

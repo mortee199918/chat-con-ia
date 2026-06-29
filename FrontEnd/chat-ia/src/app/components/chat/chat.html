@@ -7,15 +7,14 @@
     </button>
 
     <div class="header-info">
-      <span class="room-name">Sala {{ roomId }}</span>
+      <span class="room-name">{{ roomName || roomId }}</span>
       <span class="status">
         {{ isTyping ? 'DeepSeek está escribiendo...' : (isConnected ? (usersInRoom.length + ' usuario(s) conectado(s)') : 'Reconectando...') }}
       </span>
     </div>
 
     <div class="header-actions">
-      <!-- Botón usuarios -->
-      <button class="icon-btn users-btn" (click)="toggleUsers()" [class.active]="showUsers" title="Ver usuarios">
+      <button class="icon-btn" (click)="toggleUsers()" [class.active]="showUsers" title="Ver usuarios">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
           <path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/>
         </svg>
@@ -24,18 +23,17 @@
         }
       </button>
 
-      <!-- Botón compartir -->
-      <button class="share-btn" (click)="shareRoom()" [class.copied]="copied" title="Copiar enlace de invitación">
+      <button class="share-btn" (click)="shareRoom()" [class.copied]="copied" title="Copiar enlace">
         @if (copied) {
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
             <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
           </svg>
-          <span>¡Copiado!</span>
+          <span class="share-label">¡Copiado!</span>
         } @else {
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
             <path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/>
           </svg>
-          <span>Invitar</span>
+          <span class="share-label">Invitar</span>
         }
       </button>
     </div>
@@ -71,14 +69,15 @@
       }
 
       @for (msg of messages; track $index) {
+        @if (shouldShowDate($index)) {
+          <div class="date-separator"><span>{{ formatDate(msg.timestamp) }}</span></div>
+        }
         @if (msg.type === 'system') {
           <div class="system-msg">{{ msg.content }}</div>
         } @else {
-          <div class="message-row" [class.own-row]="isOwnMessage(msg)">
+          <div class="message-row" [class.own-row]="isOwnMessage(msg)" [class.new-msg]="!msg.isHistory">
             @if (!isOwnMessage(msg)) {
-              <div class="sender-name" [class.ai-name]="msg.from === 'ai'">
-                {{ msg.username }}
-              </div>
+              <div class="sender-name" [class.ai-name]="msg.from === 'ai'">{{ msg.username }}</div>
             }
             <div
               class="bubble"
@@ -98,15 +97,12 @@
         <div class="message-row">
           <div class="sender-name ai-name">DeepSeek AI</div>
           <div class="bubble ai-bubble typing-bubble">
-            <span class="dot"></span>
-            <span class="dot"></span>
-            <span class="dot"></span>
+            <span class="dot"></span><span class="dot"></span><span class="dot"></span>
           </div>
         </div>
       }
     </div>
 
-    <!-- Panel lateral de usuarios -->
     @if (showUsers) {
       <div class="users-panel">
         <div class="users-panel-header">
@@ -135,8 +131,10 @@
 
   <div class="input-bar">
     <textarea
+      #inputField
       [(ngModel)]="inputText"
       (keydown)="onKeyDown($event)"
+      (input)="autoResize($event)"
       [placeholder]="isConnected ? 'Escribe un mensaje...' : 'Esperando conexión...'"
       rows="1"
       class="input-field"

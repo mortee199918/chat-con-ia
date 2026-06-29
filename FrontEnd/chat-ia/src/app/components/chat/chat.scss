@@ -271,6 +271,43 @@
   padding: 20px 0;
 }
 
+// ── Separador de fecha ───────────────────────────────────────
+
+.date-separator {
+  display: flex;
+  align-items: center;
+  text-align: center;
+  margin: 12px 0 6px;
+  gap: 10px;
+
+  &::before, &::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: rgba(0,0,0,0.12);
+  }
+
+  span {
+    font-size: 12px;
+    color: #666;
+    background: rgba(255,255,255,0.7);
+    padding: 3px 10px;
+    border-radius: 12px;
+    white-space: nowrap;
+  }
+}
+
+// ── Animación de mensajes nuevos ─────────────────────────────
+
+@keyframes messageIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.message-row.new-msg {
+  animation: messageIn 0.18s ease-out;
+}
+
 // ── Mensajes ─────────────────────────────────────────────────
 
 .empty-state {
@@ -414,4 +451,28 @@
 
   &:hover:not(:disabled) { background: #128c7e; }
   &:disabled { background: #aaa; cursor: default; }
+}
+
+// ── Responsive móvil ─────────────────────────────────────────
+
+@media (max-width: 640px) {
+  .bubble { max-width: 85%; }
+
+  .share-label { display: none; }
+
+  .share-btn { padding: 6px 10px; }
+
+  .users-panel {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 240px;
+    z-index: 20;
+    box-shadow: -4px 0 20px rgba(0,0,0,0.2);
+  }
+
+  .input-bar { padding: 6px 8px; gap: 6px; }
+
+  .input-field { font-size: 16px; } // Evita zoom automático en iOS
 }
