@@ -322,6 +322,13 @@ async def create_room(req: CreateRoomRequest):
 @app.websocket("/ws/{room_id}/{username}")
 async def websocket_endpoint(websocket: WebSocket, room_id: str, username: str):
     if not await manager.room_exists_in_db(room_id):
+        await websocket.accept()
+        await websocket.send_text(json.dumps({
+            "type": "error",
+            "content": "Esta sala no existe o ha sido eliminada. Vuelve al lobby.",
+            "username": "Sistema",
+            "from": "system",
+        }))
         await websocket.close(code=4004)
         return
 
