@@ -14,7 +14,16 @@
       <button class="new-room-btn" (click)="showModal = true">+ Nueva sala</button>
     </div>
 
-    @if (rooms.length === 0) {
+    @if (loading) {
+      <div class="loading-state">
+        <div class="spinner"></div>
+        @if (loadingTooLong) {
+          <p class="loading-text">El servidor está despertando, espera un momento...</p>
+        } @else {
+          <p class="loading-text">Cargando salas...</p>
+        }
+      </div>
+    } @else if (rooms.length === 0) {
       <div class="empty-rooms">
         <p>No hay salas activas. ¡Crea la primera!</p>
       </div>

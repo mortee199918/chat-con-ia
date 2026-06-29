@@ -1,9 +1,10 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { Router } from '@angular/router';
+import { Router, NavigationEnd } from '@angular/router';
 import { RoomService, Room } from '../../services/room';
 import { UserService } from '../../services/user.service';
+import { Subscription, filter } from 'rxjs';
 
 @Component({
   selector: 'app-lobby',
@@ -11,11 +12,15 @@ import { UserService } from '../../services/user.service';
   templateUrl: './lobby.html',
   styleUrl: './lobby.scss',
 })
-export class Lobby implements OnInit {
+export class Lobby implements OnInit, OnDestroy {
   rooms: Room[] = [];
   showModal = false;
   newRoomName = '';
   newRoomType: 'ai' | 'peer' = 'ai';
+  loading = true;
+  loadingTooLong = false;
+  private loadingTimer: ReturnType<typeof setTimeout> | null = null;
+  private routerSub!: Subscription;
 
   get username(): string {
     return this.userService.username;
@@ -33,10 +38,35 @@ export class Lobby implements OnInit {
 
   ngOnInit(): void {
     this.loadRooms();
+    this.routerSub = this.router.events
+      .pipe(filter((e) => e instanceof NavigationEnd && e.urlAfterRedirects === '/lobby'))
+      .subscribe(() => this.loadRooms());
+  }
+
+  ngOnDestroy(): void {
+    this.routerSub?.unsubscribe();
+    if (this.loadingTimer) clearTimeout(this.loadingTimer);
   }
 
   loadRooms(): void {
-    this.roomService.getRooms().subscribe((rooms) => (this.rooms = rooms));
+    this.loading = true;
+    this.loadingTooLong = false;
+
+    this.loadingTimer = setTimeout(() => {
+      if (this.loading) this.loadingTooLong = true;
+    }, 5000);
+
+    this.roomService.getRooms().subscribe({
+      next: (rooms) => {
+        this.rooms = rooms;
+        this.loading = false;
+        if (this.loadingTimer) clearTimeout(this.loadingTimer);
+      },
+      error: () => {
+        this.loading = false;
+        if (this.loadingTimer) clearTimeout(this.loadingTimer);
+      }
+    });
   }
 
   createRoom(): void {
