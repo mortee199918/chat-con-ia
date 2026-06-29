@@ -3,6 +3,7 @@ BackEnd/venv/
 BackEnd/__pycache__/
 BackEnd/*.pyc
 BackEnd/.env
+BackEnd/*.db
 
 # Node
 FrontEnd/chat-ia/node_modules/
