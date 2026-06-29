@@ -32,6 +32,18 @@ export class WebsocketService {
   private retryTimer?: ReturnType<typeof setTimeout>;
 
   connect(roomId: string, username: string): void {
+    // Eliminar el handler del socket anterior ANTES de cerrarlo para evitar
+    // que su evento onclose dispare una reconexión con los datos del nuevo socket.
+    if (this.socket) {
+      this.socket.onclose = null;
+      this.socket.onerror = null;
+      this.socket.close();
+    }
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = undefined;
+    }
+
     this.roomId = roomId;
     this.username = username;
     this.intentionalClose = false;
