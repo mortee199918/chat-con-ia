@@ -1,0 +1,75 @@
+<div class="lobby-wrapper">
+  <div class="lobby-header">
+    <span class="logo">💬</span>
+    <h1>Chat con IA</h1>
+    <div class="user-info">
+      <span class="username">{{ username }}</span>
+      <button class="logout-btn" (click)="logout()">Salir</button>
+    </div>
+  </div>
+
+  <div class="lobby-body">
+    <div class="section-title">
+      <span>Salas activas</span>
+      <button class="new-room-btn" (click)="showModal = true">+ Nueva sala</button>
+    </div>
+
+    @if (rooms.length === 0) {
+      <div class="empty-rooms">
+        <p>No hay salas activas. ¡Crea la primera!</p>
+      </div>
+    }
+
+    <div class="rooms-list">
+      @for (room of rooms; track room.id) {
+        <div class="room-card" (click)="joinRoom(room.id)">
+          <div class="room-icon">{{ room.type === 'ai' ? '🤖' : '👥' }}</div>
+          <div class="room-info">
+            <span class="room-name">{{ room.name }}</span>
+            <span class="room-meta">
+              {{ room.type === 'ai' ? 'Chat con IA' : 'Chat entre personas' }} •
+              {{ room.users.length }} {{ room.users.length === 1 ? 'usuario' : 'usuarios' }}
+            </span>
+          </div>
+          <div class="room-code">{{ room.id }}</div>
+        </div>
+      }
+    </div>
+  </div>
+</div>
+
+@if (showModal) {
+  <div class="modal-backdrop" (click)="showModal = false">
+    <div class="modal" (click)="$event.stopPropagation()">
+      <h2>Nueva sala</h2>
+      <input
+        type="text"
+        [(ngModel)]="newRoomName"
+        placeholder="Nombre de la sala..."
+        class="modal-input"
+        maxlength="30"
+        autofocus
+      />
+      <div class="room-type-selector">
+        <button
+          class="type-btn"
+          [class.active]="newRoomType === 'ai'"
+          (click)="newRoomType = 'ai'"
+        >
+          🤖 Chat con IA
+        </button>
+        <button
+          class="type-btn"
+          [class.active]="newRoomType === 'peer'"
+          (click)="newRoomType = 'peer'"
+        >
+          👥 Entre personas
+        </button>
+      </div>
+      <div class="modal-actions">
+        <button class="cancel-btn" (click)="showModal = false">Cancelar</button>
+        <button class="create-btn" (click)="createRoom()" [disabled]="!newRoomName.trim()">Crear</button>
+      </div>
+    </div>
+  </div>
+}

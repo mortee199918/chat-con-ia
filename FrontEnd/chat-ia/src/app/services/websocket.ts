@@ -2,10 +2,12 @@ import { Injectable } from '@angular/core';
 import { Subject, Observable } from 'rxjs';
 
 export interface ChatMessage {
-  type: 'message' | 'typing' | 'error';
+  type: 'message' | 'typing' | 'error' | 'system';
   content: string;
+  username: string;
+  from: 'user' | 'ai' | 'system';
   timestamp: Date;
-  from: 'user' | 'ai';
+  users?: string[];
 }
 
 @Injectable({ providedIn: 'root' })
@@ -15,25 +17,21 @@ export class WebsocketService {
 
   messages$: Observable<ChatMessage> = this.messageSubject.asObservable();
 
-  connect(url: string): void {
-    this.socket = new WebSocket(url);
+  connect(roomId: string, username: string): void {
+    this.socket = new WebSocket(`ws://localhost:8000/ws/${roomId}/${username}`);
 
     this.socket.onmessage = (event) => {
       const data = JSON.parse(event.data);
-      this.messageSubject.next({
-        type: data.type,
-        content: data.content,
-        timestamp: new Date(),
-        from: 'ai',
-      });
+      this.messageSubject.next({ ...data, timestamp: new Date() });
     };
 
     this.socket.onerror = () => {
       this.messageSubject.next({
         type: 'error',
         content: 'Error de conexión con el servidor.',
+        username: 'Sistema',
+        from: 'system',
         timestamp: new Date(),
-        from: 'ai',
       });
     };
   }

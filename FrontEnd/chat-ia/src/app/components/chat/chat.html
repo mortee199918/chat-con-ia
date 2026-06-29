@@ -1,30 +1,55 @@
 <div class="chat-wrapper">
   <div class="chat-header">
-    <div class="avatar">IA</div>
+    <button class="back-btn" (click)="goBack()">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="22" height="22">
+        <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
+      </svg>
+    </button>
     <div class="header-info">
-      <span class="contact-name">DeepSeek AI</span>
-      <span class="status">{{ isTyping ? 'escribiendo...' : 'en línea' }}</span>
+      <span class="room-name">Sala {{ roomId }}</span>
+      <span class="status">
+        {{ isTyping ? 'DeepSeek está escribiendo...' : usersInRoom.length + ' usuario(s) conectado(s)' }}
+      </span>
     </div>
+    <button class="code-btn" (click)="copyRoomCode()" title="Copiar código de sala">
+      {{ roomId }}
+    </button>
   </div>
 
   <div class="messages-container" #messagesContainer>
     @if (messages.length === 0) {
       <div class="empty-state">
-        <p>Escribe un mensaje para empezar a chatear con la IA</p>
+        <p>Comparte el código <strong>{{ roomId }}</strong> para invitar a alguien</p>
       </div>
     }
 
     @for (msg of messages; track $index) {
-      <div class="message-row" [class.user-row]="msg.from === 'user'">
-        <div class="bubble" [class.user-bubble]="msg.from === 'user'" [class.ai-bubble]="msg.from === 'ai'" [class.error-bubble]="msg.type === 'error'">
-          <p class="bubble-text">{{ msg.content }}</p>
-          <span class="bubble-time">{{ formatTime(msg.timestamp) }}</span>
+      @if (msg.type === 'system') {
+        <div class="system-msg">{{ msg.content }}</div>
+      } @else {
+        <div class="message-row" [class.own-row]="isOwnMessage(msg)">
+          @if (!isOwnMessage(msg)) {
+            <div class="sender-name" [class.ai-name]="msg.from === 'ai'">
+              {{ msg.username }}
+            </div>
+          }
+          <div
+            class="bubble"
+            [class.own-bubble]="isOwnMessage(msg)"
+            [class.other-bubble]="!isOwnMessage(msg) && msg.from === 'user'"
+            [class.ai-bubble]="msg.from === 'ai'"
+            [class.error-bubble]="msg.type === 'error'"
+          >
+            <p class="bubble-text">{{ msg.content }}</p>
+            <span class="bubble-time">{{ formatTime(msg.timestamp) }}</span>
+          </div>
         </div>
-      </div>
+      }
     }
 
     @if (isTyping) {
       <div class="message-row">
+        <div class="sender-name ai-name">DeepSeek AI</div>
         <div class="bubble ai-bubble typing-bubble">
           <span class="dot"></span>
           <span class="dot"></span>

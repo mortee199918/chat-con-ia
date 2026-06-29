@@ -1,0 +1,19 @@
+<div class="login-wrapper">
+  <div class="login-card">
+    <div class="logo">💬</div>
+    <h1>Chat con IA</h1>
+    <p>Elige tu nombre para empezar</p>
+    <input
+      type="text"
+      [(ngModel)]="username"
+      (keydown)="onKeyDown($event)"
+      placeholder="Tu nombre..."
+      class="name-input"
+      autofocus
+      maxlength="20"
+    />
+    <button class="enter-btn" (click)="enter()" [disabled]="!username.trim()">
+      Entrar
+    </button>
+  </div>
+</div>

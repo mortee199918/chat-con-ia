@@ -1,7 +1,9 @@
 import { Component, OnInit, OnDestroy, ViewChild, ElementRef, AfterViewChecked } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { ActivatedRoute, Router } from '@angular/router';
 import { WebsocketService, ChatMessage } from '../../services/websocket';
+import { UserService } from '../../services/user.service';
 import { Subscription } from 'rxjs';
 
 @Component({
@@ -16,12 +18,31 @@ export class Chat implements OnInit, OnDestroy, AfterViewChecked {
   messages: ChatMessage[] = [];
   inputText = '';
   isTyping = false;
-  private sub!: Subscription;
+  roomId = '';
+  usersInRoom: string[] = [];
 
-  constructor(private ws: WebsocketService) {}
+  private sub!: Subscription;
+  private shouldScroll = false;
+
+  get username(): string {
+    return this.userService.username;
+  }
+
+  constructor(
+    private ws: WebsocketService,
+    private userService: UserService,
+    private route: ActivatedRoute,
+    private router: Router
+  ) {}
 
   ngOnInit(): void {
-    this.ws.connect('ws://localhost:8000/ws/chat');
+    if (!this.userService.isLoggedIn()) {
+      this.router.navigate(['/']);
+      return;
+    }
+
+    this.roomId = this.route.snapshot.paramMap.get('id') || '';
+    this.ws.connect(this.roomId, this.username);
 
     this.sub = this.ws.messages$.subscribe((msg) => {
       if (msg.type === 'typing') {
@@ -29,25 +50,22 @@ export class Chat implements OnInit, OnDestroy, AfterViewChecked {
       } else {
         this.isTyping = false;
         this.messages.push(msg);
+        if (msg.users) this.usersInRoom = msg.users;
       }
+      this.shouldScroll = true;
     });
   }
 
   ngAfterViewChecked(): void {
-    this.scrollToBottom();
+    if (this.shouldScroll) {
+      this.scrollToBottom();
+      this.shouldScroll = false;
+    }
   }
 
   sendMessage(): void {
     const text = this.inputText.trim();
     if (!text) return;
-
-    this.messages.push({
-      type: 'message',
-      content: text,
-      timestamp: new Date(),
-      from: 'user',
-    });
-
     this.ws.sendMessage(text);
     this.inputText = '';
   }
@@ -57,6 +75,18 @@ export class Chat implements OnInit, OnDestroy, AfterViewChecked {
       event.preventDefault();
       this.sendMessage();
     }
+  }
+
+  isOwnMessage(msg: ChatMessage): boolean {
+    return msg.from === 'user' && msg.username === this.username;
+  }
+
+  copyRoomCode(): void {
+    navigator.clipboard.writeText(this.roomId);
+  }
+
+  goBack(): void {
+    this.router.navigate(['/lobby']);
   }
 
   private scrollToBottom(): void {
@@ -72,6 +102,6 @@ export class Chat implements OnInit, OnDestroy, AfterViewChecked {
   }
 
   formatTime(date: Date): string {
-    return date.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+    return new Date(date).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
   }
 }
