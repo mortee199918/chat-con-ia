@@ -1,5 +1,6 @@
 import { Injectable } from '@angular/core';
 import { Subject, Observable } from 'rxjs';
+import { environment } from '../../environments/environment';
 
 export interface ChatMessage {
   type: 'message' | 'typing' | 'error' | 'system';
@@ -18,7 +19,7 @@ export class WebsocketService {
   messages$: Observable<ChatMessage> = this.messageSubject.asObservable();
 
   connect(roomId: string, username: string): void {
-    this.socket = new WebSocket(`ws://localhost:8000/ws/${roomId}/${username}`);
+    this.socket = new WebSocket(`${environment.wsUrl}/ws/${roomId}/${username}`);
 
     this.socket.onmessage = (event) => {
       const data = JSON.parse(event.data);
