@@ -24,6 +24,7 @@ app.add_middleware(
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
 DB_PATH = os.getenv("DB_PATH", "chat.db")
+MAX_AI_HISTORY = 20  # máximo de mensajes enviados a DeepSeek (10 intercambios)
 
 
 # ── Base de datos SQLite ────────────────────────────────────────
@@ -104,16 +105,22 @@ class ConnectionManager:
             return db.execute("SELECT id FROM rooms WHERE id = ?", (room_id,)).fetchone() is not None
 
     def load_conversation(self, room_id: str) -> list:
-        """Reconstruye el historial en formato OpenAI para enviar a DeepSeek."""
+        """Reconstruye el historial en formato OpenAI para enviar a DeepSeek.
+        Solo se envían los últimos MAX_AI_HISTORY mensajes para no superar
+        el límite de tokens ni encarecer las peticiones."""
         system_msg = {
             "role": "system",
             "content": "Eres un asistente útil y amigable. Responde siempre en el idioma que te hablen.",
         }
         with get_db() as db:
             rows = db.execute(
-                "SELECT from_type, content FROM messages WHERE room_id = ? ORDER BY id",
-                (room_id,),
+                """SELECT from_type, content FROM messages
+                   WHERE room_id = ?
+                   ORDER BY id DESC LIMIT ?""",
+                (room_id, MAX_AI_HISTORY),
             ).fetchall()
+        # Revertir para mantener orden cronológico
+        rows = list(reversed(rows))
         conv = [system_msg]
         for r in rows:
             role = "assistant" if r["from_type"] == "ai" else "user"
