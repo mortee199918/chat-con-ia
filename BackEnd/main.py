@@ -5,6 +5,8 @@ import httpx
 import json
 import os
 import uuid
+import sqlite3
+from contextlib import contextmanager
 from dotenv import load_dotenv
 from typing import Dict
 
@@ -21,7 +23,47 @@ app.add_middleware(
 
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
+DB_PATH = os.getenv("DB_PATH", "chat.db")
 
+
+# ── Base de datos SQLite ────────────────────────────────────────
+
+@contextmanager
+def get_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        yield conn
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def init_db():
+    with get_db() as db:
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS rooms (
+                id   TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                type TEXT NOT NULL
+            )
+        """)
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS messages (
+                id      INTEGER PRIMARY KEY AUTOINCREMENT,
+                room_id TEXT NOT NULL,
+                role    TEXT NOT NULL,
+                content TEXT NOT NULL
+            )
+        """)
+
+
+@app.on_event("startup")
+def startup():
+    init_db()
+
+
+# ── IA ──────────────────────────────────────────────────────────
 
 async def ask_deepseek(messages: list[dict]) -> str:
     headers = {
@@ -35,77 +77,71 @@ async def ask_deepseek(messages: list[dict]) -> str:
         return response.json()["choices"][0]["message"]["content"]
 
 
+# ── Gestor de conexiones WebSocket (en memoria) ─────────────────
+
 class ConnectionManager:
     def __init__(self):
-        # room_id -> { id, name, type, connections: {username: ws} }
-        self.rooms: Dict[str, dict] = {}
-        # room_id -> historial de conversación para la IA
-        self.conversations: Dict[str, list] = {}
+        # Conexiones activas: room_id -> {username: websocket}
+        self.connections: Dict[str, Dict[str, WebSocket]] = {}
 
-    def create_room(self, name: str, room_type: str) -> dict:
-        room_id = str(uuid.uuid4())[:8].upper()
-        self.rooms[room_id] = {
-            "id": room_id,
-            "name": name,
-            "type": room_type,
-            "connections": {},
+    def _ensure_room(self, room_id: str):
+        if room_id not in self.connections:
+            self.connections[room_id] = {}
+
+    def room_exists_in_db(self, room_id: str) -> bool:
+        with get_db() as db:
+            row = db.execute("SELECT id FROM rooms WHERE id = ?", (room_id,)).fetchone()
+            return row is not None
+
+    def load_conversation(self, room_id: str) -> list:
+        system_msg = {
+            "role": "system",
+            "content": "Eres un asistente útil y amigable. Responde siempre en el idioma que te hablen.",
         }
-        if room_type == "ai":
-            self.conversations[room_id] = [
-                {
-                    "role": "system",
-                    "content": "Eres un asistente útil y amigable. Responde siempre en el idioma que te hablen.",
-                }
-            ]
-        return self.rooms[room_id]
+        with get_db() as db:
+            rows = db.execute(
+                "SELECT role, content FROM messages WHERE room_id = ? ORDER BY id",
+                (room_id,)
+            ).fetchall()
+        return [system_msg] + [{"role": r["role"], "content": r["content"]} for r in rows]
 
-    def get_rooms(self):
-        return [
-            {
-                "id": r["id"],
-                "name": r["name"],
-                "type": r["type"],
-                "users": list(r["connections"].keys()),
-            }
-            for r in self.rooms.values()
-        ]
+    def save_message(self, room_id: str, role: str, content: str):
+        with get_db() as db:
+            db.execute(
+                "INSERT INTO messages (room_id, role, content) VALUES (?, ?, ?)",
+                (room_id, role, content)
+            )
 
     async def connect(self, room_id: str, username: str, websocket: WebSocket):
         await websocket.accept()
-        self.rooms[room_id]["connections"][username] = websocket
-        await self.broadcast(
-            room_id,
-            {
-                "type": "system",
-                "content": f"{username} se ha unido al chat",
-                "username": "Sistema",
-                "from": "system",
-                "users": list(self.rooms[room_id]["connections"].keys()),
-            },
-        )
+        self._ensure_room(room_id)
+        self.connections[room_id][username] = websocket
+        await self.broadcast(room_id, {
+            "type": "system",
+            "content": f"{username} se ha unido al chat",
+            "username": "Sistema",
+            "from": "system",
+            "users": list(self.connections[room_id].keys()),
+        })
 
     def disconnect(self, room_id: str, username: str):
-        if room_id in self.rooms:
-            self.rooms[room_id]["connections"].pop(username, None)
+        if room_id in self.connections:
+            self.connections[room_id].pop(username, None)
 
-    async def broadcast(self, room_id: str, message: dict, exclude: str = None):
-        if room_id not in self.rooms:
+    def get_users(self, room_id: str) -> list:
+        return list(self.connections.get(room_id, {}).keys())
+
+    async def broadcast(self, room_id: str, message: dict):
+        if room_id not in self.connections:
             return
         dead = []
-        for uname, ws in self.rooms[room_id]["connections"].items():
-            if uname == exclude:
-                continue
+        for uname, ws in self.connections[room_id].items():
             try:
                 await ws.send_text(json.dumps(message))
             except Exception:
                 dead.append(uname)
         for uname in dead:
-            self.rooms[room_id]["connections"].pop(uname, None)
-
-    async def send_to(self, room_id: str, username: str, message: dict):
-        ws = self.rooms[room_id]["connections"].get(username)
-        if ws:
-            await ws.send_text(json.dumps(message))
+            self.connections[room_id].pop(uname, None)
 
 
 manager = ConnectionManager()
@@ -115,74 +151,93 @@ manager = ConnectionManager()
 
 @app.get("/rooms")
 def get_rooms():
-    return manager.get_rooms()
+    with get_db() as db:
+        rows = db.execute("SELECT id, name, type FROM rooms ORDER BY rowid DESC").fetchall()
+    return [
+        {
+            "id": r["id"],
+            "name": r["name"],
+            "type": r["type"],
+            "users": manager.get_users(r["id"]),
+        }
+        for r in rows
+    ]
 
 
 class CreateRoomRequest(BaseModel):
     name: str
-    type: str  # "ai" | "peer"
+    type: str
 
 
 @app.post("/rooms")
 def create_room(req: CreateRoomRequest):
-    room = manager.create_room(req.name, req.type)
-    return {"id": room["id"], "name": room["name"], "type": room["type"]}
+    room_id = str(uuid.uuid4())[:8].upper()
+    with get_db() as db:
+        db.execute(
+            "INSERT INTO rooms (id, name, type) VALUES (?, ?, ?)",
+            (room_id, req.name, req.type)
+        )
+    return {"id": room_id, "name": req.name, "type": req.type}
 
 
 # ── WebSocket endpoint ──────────────────────────────────────────
 
 @app.websocket("/ws/{room_id}/{username}")
 async def websocket_endpoint(websocket: WebSocket, room_id: str, username: str):
-    if room_id not in manager.rooms:
+    if not manager.room_exists_in_db(room_id):
         await websocket.close(code=4004)
         return
 
+    with get_db() as db:
+        room = db.execute("SELECT id, name, type FROM rooms WHERE id = ?", (room_id,)).fetchone()
+    room_type = room["type"]
+
     await manager.connect(room_id, username, websocket)
-    room = manager.rooms[room_id]
 
     try:
         while True:
             data = await websocket.receive_text()
-            message = json.loads(data)
-            content = message.get("content", "")
+            content = json.loads(data).get("content", "")
 
-            # Difundir el mensaje del usuario a todos en la sala
-            await manager.broadcast(
-                room_id,
-                {"type": "message", "content": content, "username": username, "from": "user"},
-            )
+            await manager.broadcast(room_id, {
+                "type": "message",
+                "content": content,
+                "username": username,
+                "from": "user",
+            })
 
-            # Si es sala de IA, pedir respuesta a DeepSeek
-            if room["type"] == "ai":
-                conv = manager.conversations[room_id]
+            if room_type == "ai":
+                conv = manager.load_conversation(room_id)
                 conv.append({"role": "user", "content": f"{username}: {content}"})
+                manager.save_message(room_id, "user", f"{username}: {content}")
 
-                await manager.broadcast(
-                    room_id, {"type": "typing", "content": "", "username": "DeepSeek AI", "from": "ai"}
-                )
+                await manager.broadcast(room_id, {
+                    "type": "typing", "content": "", "username": "DeepSeek AI", "from": "ai"
+                })
 
                 try:
                     reply = await ask_deepseek(conv)
-                    conv.append({"role": "assistant", "content": reply})
-                    await manager.broadcast(
-                        room_id,
-                        {"type": "message", "content": reply, "username": "DeepSeek AI", "from": "ai"},
-                    )
+                    manager.save_message(room_id, "assistant", reply)
+                    await manager.broadcast(room_id, {
+                        "type": "message",
+                        "content": reply,
+                        "username": "DeepSeek AI",
+                        "from": "ai",
+                    })
                 except Exception as e:
-                    await manager.broadcast(
-                        room_id,
-                        {"type": "error", "content": f"Error con la IA: {str(e)}", "username": "Sistema", "from": "system"},
-                    )
+                    await manager.broadcast(room_id, {
+                        "type": "error",
+                        "content": f"Error con la IA: {str(e)}",
+                        "username": "Sistema",
+                        "from": "system",
+                    })
 
     except WebSocketDisconnect:
         manager.disconnect(room_id, username)
-        await manager.broadcast(
-            room_id,
-            {
-                "type": "system",
-                "content": f"{username} ha salido del chat",
-                "username": "Sistema",
-                "from": "system",
-                "users": list(manager.rooms[room_id]["connections"].keys()),
-            },
-        )
+        await manager.broadcast(room_id, {
+            "type": "system",
+            "content": f"{username} ha salido del chat",
+            "username": "Sistema",
+            "from": "system",
+            "users": manager.get_users(room_id),
+        })
