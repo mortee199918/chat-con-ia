@@ -45,7 +45,9 @@ export class Chat implements OnInit, OnDestroy, AfterViewChecked {
     this.ws.connect(this.roomId, this.username);
 
     this.sub = this.ws.messages$.subscribe((msg) => {
-      if (msg.type === 'typing') {
+      if (msg.type === 'history') {
+        this.messages = [...(msg.messages ?? []), ...this.messages];
+      } else if (msg.type === 'typing') {
         this.isTyping = true;
       } else {
         this.isTyping = false;
