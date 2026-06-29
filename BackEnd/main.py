@@ -5,11 +5,20 @@ import httpx
 import json
 import os
 import uuid
-import sqlite3
 import asyncio
+import sqlite3
 from contextlib import contextmanager
 from dotenv import load_dotenv
 from typing import Dict
+
+# En producción (Render + Python 3.11) libsql-experimental se instala con wheel.
+# En local (Python 3.9 macOS) no hay wheel, así que caemos a sqlite3.
+try:
+    import libsql_experimental as libsql
+    HAS_LIBSQL = True
+except ImportError:
+    libsql = None  # type: ignore
+    HAS_LIBSQL = False
 
 load_dotenv()
 
@@ -24,16 +33,26 @@ app.add_middleware(
 
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
-DB_PATH = os.getenv("DB_PATH", "chat.db")
-MAX_AI_HISTORY = 20  # máximo de mensajes enviados a DeepSeek (10 intercambios)
+TURSO_URL       = os.getenv("TURSO_URL", "")
+TURSO_TOKEN     = os.getenv("TURSO_TOKEN", "")
+MAX_AI_HISTORY  = 20  # máximo mensajes enviados a DeepSeek (10 intercambios)
 
 
-# ── Base de datos SQLite ────────────────────────────────────────
+# ── Base de datos (Turso en producción, archivo local en dev) ───
+#
+# Turso es SQLite en la nube: misma sintaxis SQL, pero los datos
+# viven en sus servidores y sobreviven reinicios de Render.
+# Si TURSO_URL no está configurado, usamos un archivo local como antes.
 
 @contextmanager
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
+    if HAS_LIBSQL and TURSO_URL and TURSO_TOKEN:
+        # Producción: Turso (datos persistentes en la nube)
+        conn = libsql.connect(TURSO_URL, auth_token=TURSO_TOKEN)
+    else:
+        # Desarrollo local: SQLite en archivo (datos temporales, suficiente para dev)
+        conn = sqlite3.connect("chat.db")
+        conn.row_factory = sqlite3.Row
     try:
         yield conn
         conn.commit()
@@ -60,7 +79,7 @@ def init_db():
                 created_at TEXT DEFAULT (datetime('now'))
             )
         """)
-        # Migración: añadir columnas nuevas si la tabla ya existía con el schema antiguo
+        # Migración: añadir columnas si la tabla ya existía sin ellas
         for col, definition in [
             ("username",   "TEXT NOT NULL DEFAULT 'unknown'"),
             ("from_type",  "TEXT NOT NULL DEFAULT 'user'"),
@@ -69,7 +88,7 @@ def init_db():
             try:
                 db.execute(f"ALTER TABLE messages ADD COLUMN {col} {definition}")
             except Exception:
-                pass  # La columna ya existe
+                pass
 
 
 @app.on_event("startup")
@@ -104,12 +123,13 @@ class ConnectionManager:
 
     def room_exists_in_db(self, room_id: str) -> bool:
         with get_db() as db:
-            return db.execute("SELECT id FROM rooms WHERE id = ?", (room_id,)).fetchone() is not None
+            return db.execute(
+                "SELECT id FROM rooms WHERE id = ?", (room_id,)
+            ).fetchone() is not None
 
     def load_conversation(self, room_id: str) -> list:
-        """Reconstruye el historial en formato OpenAI para enviar a DeepSeek.
-        Solo se envían los últimos MAX_AI_HISTORY mensajes para no superar
-        el límite de tokens ni encarecer las peticiones."""
+        # Solo los últimos MAX_AI_HISTORY mensajes para no superar el límite de tokens
+        # Columnas: from_type[0], content[1]
         system_msg = {
             "role": "system",
             "content": "Eres un asistente útil y amigable. Responde siempre en el idioma que te hablen.",
@@ -121,16 +141,15 @@ class ConnectionManager:
                    ORDER BY id DESC LIMIT ?""",
                 (room_id, MAX_AI_HISTORY),
             ).fetchall()
-        # Revertir para mantener orden cronológico
         rows = list(reversed(rows))
         conv = [system_msg]
         for r in rows:
-            role = "assistant" if r["from_type"] == "ai" else "user"
-            conv.append({"role": role, "content": r["content"]})
+            role = "assistant" if r[0] == "ai" else "user"
+            conv.append({"role": role, "content": r[1]})
         return conv
 
     def load_history(self, room_id: str) -> list:
-        """Devuelve los mensajes guardados en formato para el frontend."""
+        # Columnas: username[0], from_type[1], content[2], created_at[3]
         with get_db() as db:
             rows = db.execute(
                 "SELECT username, from_type, content, created_at FROM messages WHERE room_id = ? ORDER BY id",
@@ -139,10 +158,10 @@ class ConnectionManager:
         return [
             {
                 "type": "message",
-                "username": r["username"],
-                "from": r["from_type"],
-                "content": r["content"],
-                "timestamp": r["created_at"],
+                "username": r[0],
+                "from": r[1],
+                "content": r[2],
+                "timestamp": r[3],
             }
             for r in rows
         ]
@@ -170,7 +189,6 @@ class ConnectionManager:
         self._pending_cleanup[room_id] = asyncio.create_task(do_cleanup())
 
     async def connect(self, room_id: str, username: str, websocket: WebSocket):
-        # Cancelar limpieza pendiente si alguien vuelve a entrar
         if room_id in self._pending_cleanup:
             self._pending_cleanup[room_id].cancel()
             self._pending_cleanup.pop(room_id, None)
@@ -178,14 +196,12 @@ class ConnectionManager:
         await websocket.accept()
         self._ensure_room(room_id)
 
-        # Enviar historial solo al usuario que se conecta
         history = self.load_history(room_id)
         if history:
             await websocket.send_text(json.dumps({"type": "history", "messages": history}))
 
         self.connections[room_id][username] = websocket
 
-        # Notificar a todos que llegó alguien nuevo
         await self.broadcast(room_id, {
             "type": "system",
             "content": f"{username} se ha unido al chat",
@@ -226,31 +242,30 @@ def health_check():
 
 @app.get("/rooms")
 def get_rooms():
+    # Columnas: id[0], name[1], type[2]
     with get_db() as db:
         rows = db.execute("SELECT id, name, type FROM rooms ORDER BY rowid DESC").fetchall()
     return [
-        {
-            "id": r["id"],
-            "name": r["name"],
-            "type": r["type"],
-            "users": manager.get_users(r["id"]),
-        }
+        {"id": r[0], "name": r[1], "type": r[2], "users": manager.get_users(r[0])}
         for r in rows
     ]
+
+
+@app.get("/rooms/{room_id}")
+def get_room(room_id: str):
+    # Columnas: id[0], name[1], type[2]
+    with get_db() as db:
+        row = db.execute(
+            "SELECT id, name, type FROM rooms WHERE id = ?", (room_id,)
+        ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Room not found")
+    return {"id": row[0], "name": row[1], "type": row[2], "users": manager.get_users(row[0])}
 
 
 class CreateRoomRequest(BaseModel):
     name: str
     type: str
-
-
-@app.get("/rooms/{room_id}")
-def get_room(room_id: str):
-    with get_db() as db:
-        row = db.execute("SELECT id, name, type FROM rooms WHERE id = ?", (room_id,)).fetchone()
-    if not row:
-        raise HTTPException(status_code=404, detail="Room not found")
-    return {"id": row["id"], "name": row["name"], "type": row["type"], "users": manager.get_users(row["id"])}
 
 
 @app.post("/rooms")
@@ -272,7 +287,6 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, username: str):
         await websocket.close(code=4004)
         return
 
-    # Validar nombre duplicado
     if username in manager.get_users(room_id):
         await websocket.accept()
         await websocket.send_text(json.dumps({
@@ -284,9 +298,10 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, username: str):
         await websocket.close(code=4001)
         return
 
+    # Columna: type[0]
     with get_db() as db:
         room = db.execute("SELECT type FROM rooms WHERE id = ?", (room_id,)).fetchone()
-    room_type = room["type"]
+    room_type = room[0]
 
     await manager.connect(room_id, username, websocket)
 
@@ -295,7 +310,6 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, username: str):
             data = await websocket.receive_text()
             content = json.loads(data).get("content", "")
 
-            # Guardar y difundir el mensaje del usuario
             manager.save_message(room_id, username, "user", content)
             await manager.broadcast(room_id, {
                 "type": "message",
@@ -304,14 +318,11 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, username: str):
                 "from": "user",
             })
 
-            # Si es sala de IA, pedir respuesta a DeepSeek
             if room_type == "ai":
                 conv = manager.load_conversation(room_id)
-
                 await manager.broadcast(room_id, {
                     "type": "typing", "content": "", "username": "DeepSeek AI", "from": "ai",
                 })
-
                 try:
                     reply = await ask_deepseek(conv)
                     manager.save_message(room_id, "DeepSeek AI", "ai", reply)
